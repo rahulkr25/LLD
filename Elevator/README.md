@@ -211,6 +211,272 @@ selectBestElevator(floor, direction)
             minDistance = distance
             nearest = e
     return nearest
-    
+
 - Challenges: The problem becomes obvious with a simple example. Someone on floor 5 presses "up". The nearest elevator is on floor 6, but it's going down to floor 1. We'd send that elevator, even though it's heading the wrong way.
 Thanks to our Request class with direction types, the elevator won't actually pick them up while going down - it'll pass by floor 5, go to floor 1, reverse, and come back up. But that's a long wait. The person on floor 5 watches the nearest elevator ignore them as it goes the wrong way. Poor experience.
+
+2. Good Solution: Direction-Aware(Basic)
+// Priority 1: Elevators moving toward the floor in the right direction
+best = findMovingToward(floor, direction)
+if(best!=null) return best
+
+// Priority 2: Idle elevators(pick nearest)
+best = findNearestIdle(floor)
+if(best!=null) return best
+
+// Priority 3: Any elevator (pick nearest)
+return findNearest(floor)
+
+findMovingToward(floor, direction)
+    nearest = null
+    minDistance = INT_MAX;
+
+    for e in elevators:
+        if e.getDirection != direction
+            continue
+        isMovingToward = 
+            (direction == UP && e.getCurrentFloor()<=floor) ||
+            (direction == DOWN && e.getCurrentFloor()>=floor) 
+        if(!isMovingToward) continue
+
+        distance = abs(e.getCurrentFloor()-floor)
+        if(distance < minDistance)
+            nearest = e;
+            minDistance = distance
+    return nearest
+
+Challenges
+There's a subtle issue here. Imagine an elevator at floor 3 going UP with a single stop at floor 4. Someone on floor 7 presses UP. Our logic says "elevator is going UP and below floor 7, perfect match!" But the elevator will reach floor 4, have no more stops above, and reverse back DOWN. The person on floor 7 still has to wait for it to come all the way back.
+We're not checking if the elevator's existing requests will actually take it to or past the requested floor. We only check its current direction, not where it's committed to going based on its request queue.
+
+3. Great Solution: Direction-Aware with Request Queue Analysis
+The proper solution checks not just the elevator's direction, but whether its queued requests will actually take it to or past the requested floor before reversing.
+
+selectBestElevator(floor, direction)
+    // Priority 1: Elevators with stops extending to/past the requested floor
+    best = findCommittedToFloor(floor, direction)
+    if best != null
+        return best
+
+    // Priority 2: Idle elevators (pick nearest)
+    best = findNearestIdle(floor)
+    if best != null
+        return best
+
+    // Priority 3: Any elevator (pick nearest)
+    return findNearest(floor)
+
+findCommittedToFloor(floor, direction)
+    nearest = null
+    minDistance = Integer.MAX_VALUE
+
+    for e in elevators
+        if e.getDirection() != direction
+            continue
+
+        // Check if elevator is moving toward the floor (or already there)
+        isMovingToward =
+            (direction == UP && e.getCurrentFloor() <= floor) ||
+            (direction == DOWN && e.getCurrentFloor() >= floor)
+
+        if !isMovingToward
+            continue
+
+        // NEW: Check if elevator has stops that will take it to/past this floor
+        if !e.hasRequestsAtOrBeyond(floor, direction)
+            continue
+
+        distance = abs(e.getCurrentFloor() - floor)
+        if distance < minDistance
+            minDistance = distance
+            nearest = e
+
+    return nearest
+
+hasRequestsAtOrBeyond(floor, direction)
+    for request in requests:
+        if(direction == UP && request.getFloor() >= floor)
+          // Has a stop at or above the requested floor
+          if(request.getType == PICKUP_UP || request.getType() == DESTINATION)
+            return true
+        if dir == DOWN && request.getFloor() <= floor
+            // Has a stop at or below the requested floor
+            if request.getType() == PICKUP_DOWN || request.getType() == DESTINATION
+                return true
+    return false 
+Now the elevator at floor 3 going UP with only a stop at floor 4 won't be dispatched for the floor 7 UP request. It has no stops at or beyond floor 7, so it's not truly committed to going there.
+
+The last method of ElevatorController is step():
+step()
+    for e in elevators
+        e.step()
+That's it. Just tell each elevator to advance one tick. The controller doesn't need to know how elevators move. That's encapsulated in Elevator.step().
+
+Elevator
+The heart of the elevator system is Elevator.step().
+    + step()
+      // check if we should stop based on floor and type
+      pickupType = (direction == UP)? PICKUP_UP: PICKUP_DOWN
+      pickupRequest = Request(currentFloor, pickupType)
+      destinationRequest = Request(currentFloor, DESTINATION)
+
+      if(requests.contains(pickupRequest) || requests.contains(destinationRequest))
+        requests.remove(pickupRequest)
+        requests.remove(destinationRequest)
+        //... continue moving
+1. Bad Solution(FIFO)
+The simplest movement strategy is to service requests in the order they were received, regardless of where they are or which direction we're heading. If we modeled requests as a queue instead of a set:
+FIFO Movement (using Queue<Request>)
+step()
+  if requestQueue.isEmpty():
+    direction = IDLE
+    return
+  
+  // peek at the oldest request(dont remove yet)
+  target = requestQueue.peek();
+
+  if(currentFloor < target.getFloor()) currentFloor++;
+  if(currentFloor > target.getFloor()) currentFloor--;
+
+  if(currentFloor == target.getFloor()) requestQueue.poll();
+
+2. Good Solution: Always go to the nearest stop
+step()
+    if requests.isEmpty()
+        direction = IDLE
+        return
+
+    // Find nearest request (with lowest floor as tiebreaker for determinism)
+    nearest = null
+    minDistance = Integer.MAX_VALUE
+
+    for request in requests
+        distance = abs(currentFloor - request.getFloor())
+        if distance < minDistance || 
+            (distance == minDistance && (nearest == null || request.getFloor() < nearest.getFloor()))
+            minDistance = distance
+            nearest = request
+
+    // Move toward it
+    if currentFloor < nearest.getFloor()
+        currentFloor++
+    else if currentFloor > nearest.getFloor()
+        currentFloor--
+
+    // Stop if we arrived
+    if currentFloor == nearest.getFloor()
+        requests.remove(nearest)
+Challenges
+We're still changing direction unnecessarily.
+
+3. Great Solution: SCAN(Continue Until Clear, Then Reverse)
+The optimal strategy is to continue in your current direction, servicing all stops along the way, and only reverse when there are no more stops ahead. This is the SCAN algorithm
+
+Edge cases to handle
+a. Empty Requests - should go idle and do nothing
+b. stopped at a floor - need to remove the request, and check if we should reverse or go idle
+c. idle with requests - need to pick a direction before doing anything else
+d. no requests ahead in current direction - need to reverse
+
+setp()
+    // case 1: nothing to do
+    if requests.isEmpty():
+      direction = IDLE
+      return
+    
+    //case 2: if idle, pick a direction based on nearest request
+    if direction == IDLE
+      // find the nearest request to establish initial direction
+      nearest = null
+      minDistance = INT_MAX
+
+      for req in requests:
+        distance = abs(req.getFloor() - currentFloor)
+        if(distance < minDistance || (distance == minDistance &&
+        (nearest == null || req.getFloor()< neareset.getFloor()))):
+        minDistance = distance
+        nearest = req
+      direction = (nearest.getFloor()>currentFloor)?UP: DOWN;
+
+
+
+    // case 3: check if we should stop at current floor
+    // check pickup requests matching our direction, plus any destination requests
+    pickupType = (dir==UP)PICKUP_UP:PICKUP_DOWN;
+    pickupRequest = Request(currentFloor, pickupType)
+    destinationRequest = Request(currentFloor, DESTINATION)
+    
+    if requests.contains(pickupRequest) || requests.contains(destinationRequest)
+        requests.remove(pickupRequest)
+        requests.remove(destinationRequest)
+
+        // After stopping, check if we should go idle or reverse
+        if(requests.isEmpty)
+            direction = IDLE
+            return
+        
+        if !hasRequestsAhead(durection)
+            direction = (direction == UP)? DOWN: UP
+            return // we stopped this tick, don't move
+            // We return here without moving so the next tick can check if there's a stop at the current floor in the new direction.
+    
+    // case4: Reverse if no requests ahead
+    if !hasRequestsAhead(durection)
+        direction = (direction == UP)? DOWN: UP
+        return // we stopped this tick, don't move
+        // We return here without moving so the next tick can check if there's a stop at the current floor in the new direction.
+
+    // case 5:     Move one floor
+    if(direction == UP) currentFloor ++;
+    else if (direction == DOWN) currentFloor --;
+
+hasRequestsAhead(dir)
+for request in requests
+    if dir == UP && request.getFloor() > currentFloor
+        return true
+    if dir == DOWN && request.getFloor() < currentFloor
+        return true
+return false
+
+addRequest(floor, type)
+    if floor < 0 || floor > 9
+        return false
+    if floor == currentFloor
+        return true  // already here; treat as no-op
+    return requests.add(Request(floor, type))
+
+
+### Extensions
+1. "How would you add priority floors or an express elevator?"
+A better approach is to keep the standard movement logic for normal elevators and add a separate isExpress flag. In the controller's dispatch logic, if the request is for a priority floor, send the express elevator. That elevator would have a restricted addRequest method that only accepts floors 0, 5, and 9. The Request class doesn't need to change at all - it still stores floor and type, but the elevator validates which floors it accepts."
+class ElevatorController:
+    - elevators: List<Elevator>
+    - expressElevator: Elevator  // NEW: track which elevator is express
+
+class Elevator:
+    - isExpress: bool
+    - expressFloors: Set<int> = {0, 5, 9}
+
+addRequest(floor, type)
+    if floor < 0 || floor > 9
+        return false
+    if floor == currentFloor
+        return true  // already here; treat as no-op
+    
+    // NEW: Reject non-express floors if this is an express elevator
+    if isExpress && !expressFloors.contains(floor)
+        return false
+    
+    return requests.add(Request(floor, type))
+
+// In ElevatorController dispatch logic:
+selectBestElevator(floor, dir)
+    // NEW: For express floors, prefer the express elevator when it's idle; otherwise fall through to normal selection
+    if floor in {0, 5, 9} && expressElevator.getDirection() == IDLE
+        return expressElevator
+    // ... normal selection logic for regular elevators
+
+2. "How would you add undo to cancel a floor request?"
+
+removeRequest(floor, type)
+    requests.remove(Request(floor, type))  // That's it - just remove from the set
