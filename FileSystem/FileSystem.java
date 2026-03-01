@@ -128,32 +128,32 @@ public class FileSystem {
 
         synchronized(firstLock){
             synchronized(secondLock){
-                FileSystemEntry entry = srcParent.getChildren(srcName);
-                if(entry == null){
-                    throw new EntityNotFoundException("Source not found: "+ srcPath);
-                }
+        FileSystemEntry entry = srcParent.getChildren(srcName);
+        if(entry == null){
+            throw new EntityNotFoundException("Source not found: "+ srcPath);
+        }
 
-            
-                if(destParent.hasChild(destName)){
-                    throw new EntityExistsException(destName);
-                }
+       
+        if(destParent.hasChild(destName)){
+            throw new EntityExistsException(destName);
+        }
 
-                if(entry.isDirectory()){
-                    Folder current = destParent;
-                    while(current != null){
-                        if(current == entry){
-                            throw new InvalidPathException("Cannot move folder to itself");
-                        }
-                        current = current.getParent();
-                    }
+        if(entry.isDirectory()){
+            Folder current = destParent;
+            while(current != null){
+                if(current == entry){
+                    throw new InvalidPathException("Cannot move folder to itself");
                 }
+                current = current.getParent();
+            }
+        }
 
-                srcParent.removeChild(srcName);
-                entry.setName(destName);
-                destParent.addChildren(entry);
-                return true;
-         }
+        srcParent.removeChild(srcName);
+        entry.setName(destName);
+        destParent.addChildren(entry);
+        return true;
        }
+     }
     }
 
     public FileSystemEntry get(String path){
